@@ -1,8 +1,25 @@
 ########################################################################
 # Project setup
 ########################################################################
-cmake_minimum_required(VERSION 2.8.9)
+cmake_minimum_required(VERSION 3.5)
 project(SoapyPlutoSDR CXX)
+
+# export compile commands to compile_commands.json
+set(CMAKE_EXPORT_COMPILE_COMMANDS 1)
+
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+  add_compile_options(
+    -Wall
+    -pedantic
+    -Wshadow
+    -Wextra
+    -Wpointer-arith
+    -Wcast-qual
+    -Wcast-align
+    -Wconversion
+    -Wstrict-aliasing=2
+  )
+endif()
 
 # select build type to get optimization flags
 if(NOT CMAKE_BUILD_TYPE)
@@ -20,7 +37,7 @@ endif ()
 # Find libiio
 ########################################################################
 list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR})
-find_package(LibIIO 0.9 REQUIRED)
+find_package(LibIIO 0.24 REQUIRED)
 
 if (LibIIO_FOUND)
     message(STATUS "LibIIO_INCLUDE_DIRS: ${LibIIO_INCLUDE_DIRS}")
@@ -52,7 +69,7 @@ endif()
 ########################################################################
 # Find libad9361
 ########################################################################
-find_package(LibAD9361)
+find_package(LibAD9361 REQUIRED)
 
 if (LibAD9361_FOUND)
     message(STATUS "LibAD9361_INCLUDE_DIRS: ${LibAD9361_INCLUDE_DIRS}")
@@ -62,28 +79,18 @@ if (LibAD9361_FOUND)
     add_definitions(-DHAS_AD9361_IIO)
 endif()
 
-########################################################################
-# Find libusb
-########################################################################
-find_package(LibUSB)
-
-if(LibUSB_FOUND)
-    message(STATUS "LibUSB_INCLUDE_DIRS: ${LibUSB_INCLUDE_DIRS}")
-    message(STATUS "LibUSB_LIBRARIES: ${LibUSB_LIBRARIES}")
-    message(STATUS "LibUSB_DEFINITIONS: ${LibUSB_DEFINITIONS}")
-    include_directories(${LibUSB_INCLUDE_DIRS})
-    add_definitions(-DHAS_LIBUSB1)
-    #disable warnings for libusb.h
-    add_compile_options($<$<CXX_COMPILER_ID:GNU,Clang,AppleClang>:-Wno-zero-length-array>)
-endif()
-
-
 SOAPY_SDR_MODULE_UTIL(
     TARGET PlutoSDRSupport
     SOURCES
+    SoapyPlutoSDR.hpp
+    stream_format.hpp
+    rx_streamer.hpp
+    tx_streamer.hpp
     PlutoSDR_Registration.cpp
     PlutoSDR_Settings.cpp
     PlutoSDR_Streaming.cpp
+    rx_streamer.cpp
+    tx_streamer.cpp
     LIBRARIES ${LibIIO_LIBRARIES} ${LibAD9361_LIBRARIES} ${LibUSB_LIBRARIES}
 )
 
