@@ -8,7 +8,6 @@
 
 #include <iio.h>
 
-
 static std::vector<SoapySDR::Kwargs>
 find_PlutoSDR(const SoapySDR::Kwargs &args) {
 
@@ -35,17 +34,17 @@ find_PlutoSDR(const SoapySDR::Kwargs &args) {
   // Enumerate available context.
   ret = iio_scan_context_get_info_list(scan_ctx, &info);
   if (ret < 0) {
-    SoapySDR::logf(SOAPY_SDR_ERROR, "iio_scan_context_get_info_list error (%s)",
-                   strerror(-ret));
+    SoapySDR::logf(SOAPY_SDR_ERROR, "iio_scan_context_get_info_list error (%d)",
+                   ret);
   }
-  int num_contexts = ret;
+
+  const auto num_contexts = ret;
   // Iterate through available context.
   for (int i = 0; i < num_contexts; ++i) {
     const char *desc = iio_context_info_get_description(info[i]);
     if (desc == nullptr) {
       SoapySDR::logf(SOAPY_SDR_ERROR,
-                     "iio_context_info_get_description error (%s)",
-                     strerror(-ret));
+                     "iio_context_info_get_description error (%d)", ret);
       continue;
     }
 
@@ -62,7 +61,7 @@ find_PlutoSDR(const SoapySDR::Kwargs &args) {
 
     // Create context to get additional device parameters.
     auto context = iio_create_context_from_uri(uri);
-    if(context == nullptr) {
+    if (context == nullptr) {
       SoapySDR::logf(SOAPY_SDR_ERROR, "iio_create_context_from_uri error (%s)",
                      strerror(errno));
       continue;

@@ -2,76 +2,55 @@
 
 // libiio-ad9361
 #include <ad9361.h>
+#include <cstring>
 
 SoapyPlutoSDR::SoapyPlutoSDR(const SoapySDR::Kwargs &args)
-    : dev(nullptr), rx_dev(nullptr), tx_dev(nullptr), decimation(false),
-      interpolation(false), rx_stream(nullptr) {
-
-  gainMode = false;
+    : device_(nullptr), rx_dev_(nullptr), tx_dev_(nullptr), gainMode_(false),
+      decimation_(false), interpolation_(false), rx_stream_(nullptr) {
 
   if (args.count("label") != 0) {
-    SoapySDR_logf(SOAPY_SDR_INFO, "Opening %s...", args.at("label").c_str());
+    SoapySDR::logf(SOAPY_SDR_INFO, "Opening %s...", args.at("label").c_str());
   }
-
-  // Do we want to preserve the context?
 
   if (args.count("uri") != 0) {
     // Context from URI
-    ctx = iio_create_context_from_uri(args.at("uri").c_str());
+    ctx_ = iio_create_context_from_uri(args.at("uri").c_str());
   } else if (args.count("hostname") != 0) {
     // Network context from hostname
-    ctx = iio_create_network_context(args.at("hostname").c_str());
+    ctx_ = iio_create_network_context(args.at("hostname").c_str());
   } else {
     // Default context
-    ctx = iio_create_default_context();
+    ctx_ = iio_create_default_context();
   }
 
-  if (ctx == nullptr) {
+  if (ctx_ == nullptr) {
     SoapySDR_logf(SOAPY_SDR_ERROR, "no device context found.");
     throw std::runtime_error("no device context found");
   }
 
   // Find devices
-  dev = iio_context_find_device(ctx, "ad9361-phy");
-  rx_dev = iio_context_find_device(ctx, "cf-ad9361-lpc");
-  tx_dev = iio_context_find_device(ctx, "cf-ad9361-dds-core-lpc");
+  device_ = iio_context_find_device(ctx_, "ad9361-phy");
+  rx_dev_ = iio_context_find_device(ctx_, "cf-ad9361-lpc");
+  tx_dev_ = iio_context_find_device(ctx_, "cf-ad9361-dds-core-lpc");
 
-  if (dev == nullptr or rx_dev == nullptr or tx_dev == nullptr) {
+  if (device_ == nullptr or rx_dev_ == nullptr or tx_dev_ == nullptr) {
     SoapySDR_logf(SOAPY_SDR_ERROR, "no device found in this context.");
     throw std::runtime_error("no device found in this context");
   }
 
+  // TODO: fix
   setAntenna(SOAPY_SDR_RX, 0, "A_BALANCED");
   setGainMode(SOAPY_SDR_RX, 0, false);
   setAntenna(SOAPY_SDR_TX, 0, "A");
 }
 
 SoapyPlutoSDR::~SoapyPlutoSDR(void) {
+  // TODO: need to stop devices?
 
-  // TODO: what's this?
-
-  long long samplerate = 0;
-  if (decimation) {
-    iio_channel_attr_read_longlong(
-        iio_device_find_channel(dev, "voltage0", false), "sampling_frequency",
-        &samplerate);
-    iio_channel_attr_write_longlong(
-        iio_device_find_channel(rx_dev, "voltage0", false),
-        "sampling_frequency", samplerate);
-  }
-
-  if (interpolation) {
-    iio_channel_attr_read_longlong(
-        iio_device_find_channel(dev, "voltage0", true), "sampling_frequency",
-        &samplerate);
-    iio_channel_attr_write_longlong(
-        iio_device_find_channel(tx_dev, "voltage0", true), "sampling_frequency",
-        samplerate);
-  }
-
-  if (ctx) {
-    iio_context_destroy(ctx);
-    ctx = nullptr;
+  // Destroy context
+  if (ctx_) {
+    iio_context_destroy(ctx_);
+    ctx_ = nullptr;
   }
 }
 
@@ -86,25 +65,26 @@ std::string SoapyPlutoSDR::getHardwareKey(void) const { return "ADALM-PLUTO"; }
 SoapySDR::Kwargs SoapyPlutoSDR::getHardwareInfo(void) const {
   SoapySDR::Kwargs info;
 
-  unsigned int major, minor;
-  char git_tag[8];
+  unsigned int major = 0;
+  unsigned int minor = 0;
+  char git_tag[8] = {0};
 
+  // Get library version
   iio_library_get_version(&major, &minor, git_tag);
-
   char lib_ver[100];
   snprintf(lib_ver, 100, "%u.%u (git tag: %s)", major, minor, git_tag);
   info["library_version"] = lib_ver;
 
-  iio_context_get_version(ctx, &major, &minor, git_tag);
+  // Get backend version
+  iio_context_get_version(ctx_, &major, &minor, git_tag);
   char backend_ver[100];
-
   snprintf(backend_ver, 100, "%u.%u (git tag: %s)", major, minor, git_tag);
   info["backend_version"] = backend_ver;
 
-  unsigned int nb_ctx_attrs = iio_context_get_attrs_count(ctx);
+  unsigned int nb_ctx_attrs = iio_context_get_attrs_count(ctx_);
   for (unsigned int i = 0; i < nb_ctx_attrs; i++) {
     const char *key, *value;
-    iio_context_get_attr(ctx, i, &key, &value);
+    iio_context_get_attr(ctx_, i, &key, &value);
     info[key] = value;
   }
 
@@ -115,33 +95,36 @@ SoapySDR::Kwargs SoapyPlutoSDR::getHardwareInfo(void) const {
  * Channels API
  ******************************************************************/
 
-size_t SoapyPlutoSDR::getNumChannels(const int dir) const { return (1); }
+size_t SoapyPlutoSDR::getNumChannels(const int dir) const { return 1; }
 
 bool SoapyPlutoSDR::getFullDuplex(const int direction,
                                   const size_t channel) const {
-  return (true);
+  return true;
 }
 
 /*******************************************************************
  * Sensor API
  ******************************************************************/
 
-bool SoapyPlutoSDR::is_sensor_channel(struct iio_channel *chn) const {
-  return (!iio_channel_is_output(chn) && (iio_channel_find_attr(chn, "raw") ||
-                                          iio_channel_find_attr(chn, "input")));
-}
+// bool SoapyPlutoSDR::is_sensor_channel(struct iio_channel *chn) const {
+//   return (not iio_channel_is_output(chn) and
+//           (iio_channel_find_attr(chn, "raw") or
+//            iio_channel_find_attr(chn, "input")));
+// }
 
-double SoapyPlutoSDR::double_from_buf(const char *buf) const {
-  std::istringstream val_as_string(buf);
-  val_as_string.imbue(std::locale::classic()); // ignore global C++ locale
-
+double SoapyPlutoSDR::double_from_buf(const char *const buf) const {
   double val = 0.0;
+  std::istringstream val_as_string(buf);
+
+  // val_as_string.imbue(std::locale::classic()); // ignore global C++ locale
   val_as_string >> val;
 
   return val;
 }
 
-double SoapyPlutoSDR::get_sensor_value(struct iio_channel *chn) const {
+double SoapyPlutoSDR::get_sensor_value(const struct iio_channel *chn) const {
+
+  // TODO: check if this is correct
   char buf[32];
   double val = 0.0;
 
@@ -171,21 +154,22 @@ double SoapyPlutoSDR::get_sensor_value(struct iio_channel *chn) const {
 }
 
 std::string SoapyPlutoSDR::id_to_unit(const std::string &id) const {
-  static std::map<std::string, std::string> id_to_unit_table = {
+  const static std::map<std::string, std::string> id_to_unit_table = {
       {"current", "A"},
       {"power", "W"},
       {"temp", "C"},
       {"voltage", "V"},
   };
 
-  for (auto it_match : id_to_unit_table) {
-
-    // if the id starts with a known prefix, retreive its unit.
+  for (const auto &it_match : id_to_unit_table) {
+    // TODO: use modern api
+    // If the id starts with a known prefix, retreive its unit.
     if (id.substr(0, it_match.first.size()) == it_match.first) {
       return it_match.second;
     }
   }
-  return std::string();
+
+  return "unknown";
 }
 
 std::vector<std::string> SoapyPlutoSDR::listSensors(void) const {
@@ -217,17 +201,22 @@ SoapySDR::ArgInfo SoapyPlutoSDR::getSensorInfo(const std::string &key) const {
     std::string deviceStr = key.substr(0, dash);
     std::string channelStr = key.substr(dash + 1);
 
-    iio_device *dev = iio_context_find_device(ctx, deviceStr.c_str());
-    if (!dev)
+    iio_device *dev = iio_context_find_device(ctx_, deviceStr.c_str());
+    if (!dev) {
       return info;
+    }
+
     iio_channel *chn = iio_device_find_channel(dev, channelStr.c_str(), false);
-    if (!chn)
+    if (!chn) {
       return info;
+    }
 
     const char *name = iio_channel_get_name(chn);
     info.key = key;
-    if (name)
+    if (name) {
       info.name = name;
+    }
+
     info.type = SoapySDR::ArgInfo::FLOAT;
     info.value = "0.0";
     info.units = id_to_unit(channelStr);
@@ -244,12 +233,15 @@ std::string SoapyPlutoSDR::readSensor(const std::string &key) const {
     std::string deviceStr = key.substr(0, dash);
     std::string channelStr = key.substr(dash + 1);
 
-    iio_device *dev = iio_context_find_device(ctx, deviceStr.c_str());
-    if (!dev)
+    iio_device *dev = iio_context_find_device(ctx_, deviceStr.c_str());
+    if (!dev) {
       return sensorValue;
+    }
+
     iio_channel *chn = iio_device_find_channel(dev, channelStr.c_str(), false);
-    if (!chn)
+    if (!chn) {
       return sensorValue;
+    }
 
     double value = get_sensor_value(chn);
     sensorValue.assign(std::to_string(value));
@@ -301,14 +293,14 @@ SoapyPlutoSDR::listAntennas(const int direction, const size_t channel) const {
 void SoapyPlutoSDR::setAntenna(const int direction, const size_t channel,
                                const std::string &name) {
   if (direction == SOAPY_SDR_RX) {
-    std::lock_guard<std::mutex> lock(rx_device_mutex);
-    iio_channel_attr_write(iio_device_find_channel(dev, "voltage0", false),
+    // std::lock_guard<std::mutex> lock(rx_device_mutex);
+    iio_channel_attr_write(iio_device_find_channel(device_, "voltage0", false),
                            "rf_port_select", name.c_str());
   }
 
   else if (direction == SOAPY_SDR_TX) {
-    std::lock_guard<std::mutex> lock(tx_device_mutex);
-    iio_channel_attr_write(iio_device_find_channel(dev, "voltage0", true),
+    // std::lock_guard<std::mutex> lock(tx_device_mutex);
+    iio_channel_attr_write(iio_device_find_channel(device_, "voltage0", true),
                            "rf_port_select", name.c_str());
   }
 }
@@ -356,48 +348,50 @@ bool SoapyPlutoSDR::hasGainMode(const int direction,
 void SoapyPlutoSDR::setGainMode(const int direction, const size_t channel,
                                 const bool automatic) {
 
-  gainMode = automatic;
+  gainMode_ = automatic;
   if (direction == SOAPY_SDR_RX) {
-    std::lock_guard<std::mutex> lock(rx_device_mutex);
-    if (gainMode) {
+    // std::lock_guard<std::mutex> lock(rx_device_mutex);
+    if (gainMode_) {
 
-      iio_channel_attr_write(iio_device_find_channel(dev, "voltage0", false),
-                             "gain_control_mode", "slow_attack");
+      iio_channel_attr_write(
+          iio_device_find_channel(device_, "voltage0", false),
+          "gain_control_mode", "slow_attack");
 
     } else {
 
-      iio_channel_attr_write(iio_device_find_channel(dev, "voltage0", false),
-                             "gain_control_mode", "manual");
+      iio_channel_attr_write(
+          iio_device_find_channel(device_, "voltage0", false),
+          "gain_control_mode", "manual");
     }
   }
 }
 
 bool SoapyPlutoSDR::getGainMode(const int direction,
                                 const size_t channel) const {
-  return gainMode;
+  return gainMode_;
 }
 
 void SoapyPlutoSDR::setGain(const int direction, const size_t channel,
                             const double value) {
   long long gain = (long long)value;
   if (direction == SOAPY_SDR_RX) {
-    std::lock_guard<std::mutex> lock(rx_device_mutex);
+    // std::lock_guard<std::mutex> lock(rx_device_mutex);
     iio_channel_attr_write_longlong(
-        iio_device_find_channel(dev, "voltage0", false), "hardwaregain", gain);
+        iio_device_find_channel(device_, "voltage0", false), "hardwaregain",
+        gain);
 
-  }
-
-  else if (direction == SOAPY_SDR_TX) {
-    std::lock_guard<std::mutex> lock(tx_device_mutex);
+  } else if (direction == SOAPY_SDR_TX) {
+    // std::lock_guard<std::mutex> lock(tx_device_mutex);
     gain = gain - 89;
     iio_channel_attr_write_longlong(
-        iio_device_find_channel(dev, "voltage0", true), "hardwaregain", gain);
+        iio_device_find_channel(device_, "voltage0", true), "hardwaregain",
+        gain);
   }
 }
 
 void SoapyPlutoSDR::setGain(const int direction, const size_t channel,
                             const std::string &name, const double value) {
-  this->setGain(direction, channel, value);
+  setGain(direction, channel, value);
 }
 
 double SoapyPlutoSDR::getGain(const int direction, const size_t channel,
@@ -409,18 +403,16 @@ double SoapyPlutoSDR::getGain(const int direction, const size_t channel,
     // std::lock_guard<std::mutex> lock(rx_device_mutex);
 
     if (iio_channel_attr_read_longlong(
-            iio_device_find_channel(dev, "voltage0", false), "hardwaregain",
-            &gain) != 0)
+            iio_device_find_channel(device_, "voltage0", false), "hardwaregain",
+            &gain) != 0) {
       return 0;
-
-  }
-
-  else if (direction == SOAPY_SDR_TX) {
+    }
+  } else if (direction == SOAPY_SDR_TX) {
 
     // std::lock_guard<std::mutex> lock(tx_device_mutex);
 
     if (iio_channel_attr_read_longlong(
-            iio_device_find_channel(dev, "voltage0", true), "hardwaregain",
+            iio_device_find_channel(device_, "voltage0", true), "hardwaregain",
             &gain) != 0)
       return 0;
     gain = gain + 89;
@@ -431,9 +423,16 @@ double SoapyPlutoSDR::getGain(const int direction, const size_t channel,
 SoapySDR::Range SoapyPlutoSDR::getGainRange(const int direction,
                                             const size_t channel,
                                             const std::string &name) const {
-  if (direction == SOAPY_SDR_RX)
+
+  SoapySDR::logf(SOAPY_SDR_INFO, "getGainRange()");
+
+  if (direction == SOAPY_SDR_RX) {
     return (SoapySDR::Range(0, 73));
-  return (SoapySDR::Range(0, 89));
+  } else if (direction == SOAPY_SDR_TX) {
+    return (SoapySDR::Range(0, 89));
+  }
+
+  return SoapySDR::Range();
 }
 
 /*******************************************************************
@@ -444,47 +443,58 @@ void SoapyPlutoSDR::setFrequency(const int direction, const size_t channel,
                                  const std::string &name,
                                  const double frequency,
                                  const SoapySDR::Kwargs &args) {
-  long long freq = (long long)frequency;
+
+  // Use rounding.
+  long long freq = static_cast<long long>(round(frequency));
+  int ret = 0;
+
+  // TODO: fix tx/rx
+  SoapySDR::logf(SOAPY_SDR_INFO, "setFrequency() %lld", freq);
+
   if (direction == SOAPY_SDR_RX) {
-
-    std::lock_guard<std::mutex> lock(rx_device_mutex);
-    iio_channel_attr_write_longlong(
-        iio_device_find_channel(dev, "altvoltage0", true), "frequency", freq);
-  }
-
-  else if (direction == SOAPY_SDR_TX) {
-    std::lock_guard<std::mutex> lock(tx_device_mutex);
-    iio_channel_attr_write_longlong(
-        iio_device_find_channel(dev, "altvoltage1", true), "frequency", freq);
+    // Set RX LO frequency
+    const auto chan = iio_device_find_channel(device_, "altvoltage0", true);
+    ret = iio_channel_attr_write_longlong(chan, "frequency", freq);
+    if (ret != 0) {
+      SoapySDR::logf(SOAPY_SDR_ERROR, "setFrequency() failed %d", ret);
+    }
+    // TODO: check result
+  } else if (direction == SOAPY_SDR_TX) {
+    // Set TX LO frequency
+    const auto chan = iio_device_find_channel(device_, "altvoltage1", true);
+    ret = iio_channel_attr_write_longlong(chan, "frequency", freq);
+    if (ret != 0) {
+      SoapySDR::logf(SOAPY_SDR_ERROR, "setFrequency() failed %d", ret);
+    }
   }
 }
 
 double SoapyPlutoSDR::getFrequency(const int direction, const size_t channel,
                                    const std::string &name) const {
   long long freq = 0;
+  int ret = 0;
+
+  SoapySDR::logf(SOAPY_SDR_DEBUG, "getFrequency()");
 
   if (direction == SOAPY_SDR_RX) {
+    const auto chan = iio_device_find_channel(device_, "altvoltage0", true);
+    ret = iio_channel_attr_read_longlong(chan, "frequency", &freq);
 
-    // std::lock_guard<std::mutex> lock(rx_device_mutex);
+    if (ret != 0) {
+      SoapySDR::logf(SOAPY_SDR_ERROR, "getFrequency() failed");
+      freq = 0;
+    }
+  } else if (direction == SOAPY_SDR_TX) {
+    const auto chan = iio_device_find_channel(device_, "altvoltage1", true);
+    ret = iio_channel_attr_read_longlong(chan, "frequency", &freq);
 
-    if (iio_channel_attr_read_longlong(
-            iio_device_find_channel(dev, "altvoltage0", true), "frequency",
-            &freq) != 0)
-      return 0;
-
+    if (ret != 0) {
+      SoapySDR::logf(SOAPY_SDR_ERROR, "getFrequency() failed");
+      freq = 0;
+    }
   }
 
-  else if (direction == SOAPY_SDR_TX) {
-
-    // std::lock_guard<std::mutex> lock(tx_device_mutex);
-
-    if (iio_channel_attr_read_longlong(
-            iio_device_find_channel(dev, "altvoltage1", true), "frequency",
-            &freq) != 0)
-      return 0;
-  }
-
-  return double(freq);
+  return static_cast<double>(freq);
 }
 
 SoapySDR::ArgInfoList
@@ -500,7 +510,9 @@ std::vector<std::string>
 SoapyPlutoSDR::listFrequencies(const int direction,
                                const size_t channel) const {
   std::vector<std::string> names;
+
   names.push_back("RF");
+
   return (names);
 }
 
@@ -515,102 +527,65 @@ SoapyPlutoSDR::getFrequencyRange(const int direction, const size_t channel,
  ******************************************************************/
 void SoapyPlutoSDR::setSampleRate(const int direction, const size_t channel,
                                   const double rate) {
-  long long samplerate = (long long)rate;
 
-  // TODO
-  //#ifdef HAS_AD9361_IIO
-  int const fir = 4; // assume ad9361_set_bb_rate() will load x4 FIR if needed
-                     //#else
-                     //  int const fir = 1;
-                     //#endif
+  int ret = 0;
+  long long samplerate = static_cast<long long>(rate);
 
-  // note: sample rates below 25e6/12 need x8 decimation/interpolation or x4 FIR
-  // to 25e6/48, below 25e6/96 need x8 decimation/interpolation and x4 FIR,
-  // minimum is 25e6/384 if libad9361 is available it will load an approporiate
-  // FIR.
-  if (direction == SOAPY_SDR_RX) {
-    std::lock_guard<std::mutex> lock(rx_device_mutex);
-    decimation = false;
-    if (samplerate < (25e6 / (12 * fir))) {
-      if (samplerate * 8 < (25e6 / 48)) {
-        SoapySDR_logf(SOAPY_SDR_CRITICAL, "sample rate is not supported.");
-      } else if (samplerate * 8 < (25e6 / 12)) {
-        SoapySDR_logf(SOAPY_SDR_NOTICE,
-                      "sample rate needs a FIR setting loaded.");
-      }
+  SoapySDR::logf(SOAPY_SDR_INFO, "setSampleRate() %lld", samplerate);
 
-      decimation = true;
-      samplerate = samplerate * 8;
-    }
+  /*
+  NOTE:
+  In the minimum ADC rate is 25MSPS. Baseband rates below 2.083 MSPS
+  (25MSPS/12) require FIR decimation/interpolation to be set. In other words
+  the FIR filter needs to be configured and enabled. The minimum baseband rate
+  with the FIR filter (decimate by 4) enabled is: 25MSPS /(4*12) = 520.83
+  kSPS.
+  */
 
-    iio_channel_attr_write_longlong(
-        iio_device_find_channel(dev, "voltage0", false), "sampling_frequency",
-        samplerate);
-
-    iio_channel_attr_write_longlong(
-        iio_device_find_channel(rx_dev, "voltage0", false),
-        "sampling_frequency", decimation ? samplerate / 8 : samplerate);
-
-    if (rx_stream)
-      rx_stream->set_buffer_size_by_samplerate(decimation ? samplerate / 8
-                                                          : samplerate);
+  // This will set up decimation/interpolation and filters automatically.
+  ret = ad9361_set_bb_rate(device_, samplerate);
+  if (ret < 0) {
+    SoapySDR_logf(SOAPY_SDR_ERROR, "setSampleRate() failed %d", ret);
   }
 
-  else if (direction == SOAPY_SDR_TX) {
-    std::lock_guard<std::mutex> lock(tx_device_mutex);
-    interpolation = false;
-    if (samplerate < (25e6 / (12 * fir))) {
-      if (samplerate * 8 < (25e6 / 48)) {
-        SoapySDR_logf(SOAPY_SDR_CRITICAL, "sample rate is not supported.");
-      } else if (samplerate * 8 < (25e6 / 12)) {
-        SoapySDR_logf(SOAPY_SDR_NOTICE,
-                      "sample rate needs a FIR setting loaded.");
-      }
-
-      interpolation = true;
-      samplerate = samplerate * 8;
-    }
-
-    iio_channel_attr_write_longlong(
-        iio_device_find_channel(dev, "voltage0", true), "sampling_frequency",
-        samplerate);
-    iio_channel_attr_write_longlong(
-        iio_device_find_channel(tx_dev, "voltage0", true), "sampling_frequency",
-        interpolation ? samplerate / 8 : samplerate);
+  // TODO: fix this
+  if (rx_stream_) {
+    rx_stream_->set_buffer_size_by_samplerate(samplerate);
   }
 
-  //#ifdef HAS_AD9361_IIO
-  if (ad9361_set_bb_rate(dev, (unsigned long)samplerate)) {
-    SoapySDR_logf(SOAPY_SDR_ERROR, "Unable to set BB rate.");
-  }
-  //#endif
+  return;
 }
 
 double SoapyPlutoSDR::getSampleRate(const int direction,
                                     const size_t channel) const {
   long long samplerate = 0;
+  int ret = 0;
+
+  SoapySDR::logf(SOAPY_SDR_DEBUG, "getSampleRate()");
 
   if (direction == SOAPY_SDR_RX) {
-
-    // std::lock_guard<std::mutex> lock(rx_device_mutex);
-
-    if (iio_channel_attr_read_longlong(
-            iio_device_find_channel(rx_dev, "voltage0", false),
-            "sampling_frequency", &samplerate) != 0)
-      return 0;
+    // RX
+    const auto chan = iio_device_find_channel(rx_dev_, "voltage0", false);
+    ret =
+        iio_channel_attr_read_longlong(chan, "sampling_frequency", &samplerate);
+    if (ret != 0) {
+      SoapySDR::logf(SOAPY_SDR_ERROR, "getSampleRate() failed %d", ret);
+      samplerate = 0;
+    }
+  } else if (direction == SOAPY_SDR_TX) {
+    // TX
+    const auto chan = iio_device_find_channel(tx_dev_, "voltage0", true);
+    ret =
+        iio_channel_attr_read_longlong(chan, "sampling_frequency", &samplerate);
+    if (ret != 0) {
+      SoapySDR::logf(SOAPY_SDR_ERROR, "getSampleRate() failed %d", ret);
+      samplerate = 0;
+    }
   }
 
-  else if (direction == SOAPY_SDR_TX) {
+  SoapySDR::logf(SOAPY_SDR_DEBUG, "getSampleRate() %lld", samplerate);
 
-    // std::lock_guard<std::mutex> lock(tx_device_mutex);
-
-    if (iio_channel_attr_read_longlong(
-            iio_device_find_channel(tx_dev, "voltage0", true),
-            "sampling_frequency", &samplerate) != 0)
-      return 0;
-  }
-
-  return double(samplerate);
+  return static_cast<double>(samplerate);
 }
 
 std::vector<double> SoapyPlutoSDR::listSampleRates(const int direction,
@@ -640,21 +615,8 @@ SoapyPlutoSDR::getSampleRateRange(const int direction,
   SoapySDR::logf(SOAPY_SDR_DEBUG, "getSampleRateRange(%d, %d)", direction,
                  channel);
 
-  // note that there are some gaps and rounding errors since we get truncated
-  // values form IIO e.g. 25e6/12 = 2083333.333 is read as 2083333 but written
-  // as 2083334
-//#ifdef HAS_AD9361_IIO
-  // assume ad9361_set_bb_rate(), if available, will load x4 FIR as needed
-  // below 25e6/96 needs x8 decimation/interpolation and x4 FIR, minimum is
-  // 25e6/384
-
+  // TODO: double check values
   results.push_back(SoapySDR::Range(25e6 / 384, 61440000));
-
-  //#else
-  // sample rates below 25e6/12 need x8 decimation/interpolation (or x4 FIR to
-  // 25e6/48)
-  //results.push_back(SoapySDR::Range(25e6 / 96, 61440000));
-//#endif
 
   return results;
 }
@@ -662,24 +624,37 @@ SoapyPlutoSDR::getSampleRateRange(const int direction,
 void SoapyPlutoSDR::setBandwidth(const int direction, const size_t channel,
                                  const double bw) {
 
+  long long bandwidth = 0;
+  int ret = 0;
+
   SoapySDR::logf(SOAPY_SDR_DEBUG, "setBandwidth(%d, %d, %f)", direction,
                  channel, bw);
 
-  long long bandwidth = (long long)bw;
-  if (direction == SOAPY_SDR_RX) {
-    std::lock_guard<std::mutex> lock(rx_device_mutex);
-
-    iio_channel_attr_write_longlong(
-        iio_device_find_channel(dev, "voltage0", false), "rf_bandwidth",
-        bandwidth);
+  // 0 means automatic bandwidth selection.
+  if (bw == 0) {
+    // TODO: make factor constant
+    bandwidth =
+        static_cast<long long>(round(0.75 * getSampleRate(direction, channel)));
+  } else {
+    bandwidth = static_cast<long long>(round(bw));
   }
 
-  else if (direction == SOAPY_SDR_TX) {
-    std::lock_guard<std::mutex> lock(tx_device_mutex);
+  // Set bandwidth
+  if (direction == SOAPY_SDR_RX) {
+    const auto chan = iio_device_find_channel(device_, "voltage0", false);
+    ret = iio_channel_attr_write_longlong(chan, "rf_bandwidth", bandwidth);
+    if (ret != 0) {
+      SoapySDR::logf(SOAPY_SDR_ERROR, "setBandwidth(%d, %d, %f) failed: %s",
+                     direction, channel, bw, strerror(-ret));
+    }
+  } else if (direction == SOAPY_SDR_TX) {
 
-    iio_channel_attr_write_longlong(
-        iio_device_find_channel(dev, "voltage0", true), "rf_bandwidth",
-        bandwidth);
+    const auto chan = iio_device_find_channel(device_, "voltage0", true);
+    ret = iio_channel_attr_write_longlong(chan, "rf_bandwidth", bandwidth);
+    if (ret != 0) {
+      SoapySDR::logf(SOAPY_SDR_ERROR, "setBandwidth(%d, %d, %f) failed: %s",
+                     direction, channel, bw, strerror(-ret));
+    }
   }
 }
 
@@ -688,28 +663,29 @@ double SoapyPlutoSDR::getBandwidth(const int direction,
 
   SoapySDR::logf(SOAPY_SDR_DEBUG, "getBandwidth(%d, %d)", direction, channel);
 
+  int ret = 0;
   long long bandwidth = 0;
 
   if (direction == SOAPY_SDR_RX) {
-    // std::lock_guard<std::mutex> lock(rx_device_mutex);
-
-    if (iio_channel_attr_read_longlong(
-            iio_device_find_channel(dev, "voltage0", false), "rf_bandwidth",
-            &bandwidth) != 0)
+    // RX
+    const auto chan = iio_device_find_channel(device_, "voltage0", false);
+    ret = iio_channel_attr_read_longlong(chan, "rf_bandwidth", &bandwidth);
+    if (ret != 0) {
+      SoapySDR::logf(SOAPY_SDR_ERROR, "getBandwidth(%d, %d) failed: %s",
+                     direction, channel, strerror(-ret));
       return 0;
+    }
 
+  } else if (direction == SOAPY_SDR_TX) {
+    // TX
+    const auto chan = iio_device_find_channel(device_, "voltage0", true);
+    ret = iio_channel_attr_read_longlong(chan, "rf_bandwidth", &bandwidth);
+    if (ret != 0) {
+      return 0;
+    }
   }
 
-  else if (direction == SOAPY_SDR_TX) {
-    // std::lock_guard<std::mutex> lock(tx_device_mutex);
-
-    if (iio_channel_attr_read_longlong(
-            iio_device_find_channel(dev, "voltage0", true), "rf_bandwidth",
-            &bandwidth) != 0)
-      return 0;
-  }
-
-  return double(bandwidth);
+  return static_cast<double>(bandwidth);
 }
 
 std::vector<double> SoapyPlutoSDR::listBandwidths(const int direction,

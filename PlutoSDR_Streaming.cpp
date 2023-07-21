@@ -21,6 +21,8 @@ SoapyPlutoSDR::getStreamFormats(const int direction,
   return formats;
 }
 
+// #include <SoapySDR/ConverterRegistry.hpp>
+
 std::string SoapyPlutoSDR::getNativeStreamFormat(const int direction,
                                                  const size_t channel,
                                                  double &fullScale) const {
@@ -50,9 +52,9 @@ bool SoapyPlutoSDR::IsValidRxStreamHandle(SoapySDR::Stream *handle) const {
 
   // handle is an opaque pointer hiding either rx_stream or tx_streamer:
   // check that the handle matches one of them, consistently with direction:
-  if (rx_stream) {
+  if (rx_stream_) {
     // test if these handles really belong to us:
-    if (reinterpret_cast<rx_streamer *>(handle) == rx_stream.get()) {
+    if (reinterpret_cast<rx_streamer *>(handle) == rx_stream_.get()) {
       return true;
     }
   }
@@ -67,9 +69,9 @@ bool SoapyPlutoSDR::IsValidTxStreamHandle(SoapySDR::Stream *handle) const {
 
   // handle is an opaque pointer hiding either rx_stream or tx_streamer:
   // check that the handle matches one of them, consistently with direction:
-  if (tx_stream) {
+  if (tx_stream_) {
     // test if these handles really belong to us:
-    if (reinterpret_cast<tx_streamer *>(handle) == tx_stream.get()) {
+    if (reinterpret_cast<tx_streamer *>(handle) == tx_stream_.get()) {
       return true;
     }
   }
@@ -82,10 +84,19 @@ SoapyPlutoSDR::setupStream(const int direction, const std::string &format,
                            const std::vector<size_t> &channels,
                            const SoapySDR::Kwargs &args) {
 
-  SoapySDR::logf(SOAPY_SDR_INFO, "setupStream");
-
-  // check the format
+  // TODO: check the format
   plutosdrStreamFormat streamFormat;
+
+  // Assert that the channel is valid
+  if(channels.size() != 1 and channels[0] == 0) {
+    throw std::runtime_error("setupStream: invalid channel");
+  }
+
+  for (const auto &channel : channels) {
+    SoapySDR::logf(SOAPY_SDR_DEBUG,
+                   "setupStream: direction=%d, format=%s, channel=%d",
+                   direction, format.c_str(), channel);
+  }
 
   if (format == SOAPY_SDR_CF32) {
     SoapySDR_log(SOAPY_SDR_INFO, "Using format CF32.");
@@ -107,30 +118,29 @@ SoapyPlutoSDR::setupStream(const int direction, const std::string &format,
 
   if (direction == SOAPY_SDR_RX) {
 
-    std::lock_guard<std::mutex> lock(rx_device_mutex);
+    const auto chan = iio_device_find_channel(device_, "altvoltage0", true);
+    iio_channel_attr_write_bool(chan, "powerdown",
+                                false); // Turn ON RX LO
+
+    const auto cloned_ctx = iio_context_clone(ctx_);
+    if (cloned_ctx == nullptr) {
+      throw std::runtime_error("iio_context_clone(ctx) == nullptr");
+    }
+
+    rx_stream_ = std::unique_ptr<rx_streamer>(
+        new rx_streamer(cloned_ctx, streamFormat, channels, args));
+
+    return reinterpret_cast<SoapySDR::Stream *>(this->rx_stream_.get());
+  } else if (direction == SOAPY_SDR_TX) {
 
     iio_channel_attr_write_bool(
-        iio_device_find_channel(dev, "altvoltage0", true), "powerdown",
-        false); // Turn ON RX LO
-
-    this->rx_stream = std::unique_ptr<rx_streamer>(
-        new rx_streamer(rx_dev, streamFormat, channels, args));
-
-    return reinterpret_cast<SoapySDR::Stream *>(this->rx_stream.get());
-  }
-
-  else if (direction == SOAPY_SDR_TX) {
-
-    std::lock_guard<std::mutex> lock(tx_device_mutex);
-
-    iio_channel_attr_write_bool(
-        iio_device_find_channel(dev, "altvoltage1", true), "powerdown",
+        iio_device_find_channel(device_, "altvoltage1", true), "powerdown",
         false); // Turn ON TX LO
 
-    this->tx_stream = std::unique_ptr<tx_streamer>(
-        new tx_streamer(tx_dev, streamFormat, channels, args));
+    this->tx_stream_ = std::unique_ptr<tx_streamer>(
+        new tx_streamer(tx_dev_, streamFormat, channels, args));
 
-    return reinterpret_cast<SoapySDR::Stream *>(this->tx_stream.get());
+    return reinterpret_cast<SoapySDR::Stream *>(this->tx_stream_.get());
   }
 
   return nullptr;
@@ -139,36 +149,35 @@ SoapyPlutoSDR::setupStream(const int direction, const std::string &format,
 void SoapyPlutoSDR::closeStream(SoapySDR::Stream *handle) {
   // scope lock:
   {
-    std::lock_guard<std::mutex> lock(rx_device_mutex);
+    // std::lock_guard<std::mutex> lock(rx_device_mutex);
 
     if (IsValidRxStreamHandle(handle)) {
-      this->rx_stream.reset();
+      this->rx_stream_.reset();
 
       iio_channel_attr_write_bool(
-          iio_device_find_channel(dev, "altvoltage0", true), "powerdown",
+          iio_device_find_channel(device_, "altvoltage0", true), "powerdown",
           true); // Turn OFF RX LO
     }
   }
 
   // scope lock :
   {
-    std::lock_guard<std::mutex> lock(tx_device_mutex);
+    // std::lock_guard<std::mutex> lock(tx_device_mutex);
 
     if (IsValidTxStreamHandle(handle)) {
-      this->tx_stream.reset();
+      this->tx_stream_.reset();
 
       iio_channel_attr_write_bool(
-          iio_device_find_channel(dev, "altvoltage1", true), "powerdown",
+          iio_device_find_channel(device_, "altvoltage1", true), "powerdown",
           true); // Turn OFF TX LO
     }
   }
 }
 
 size_t SoapyPlutoSDR::getStreamMTU(SoapySDR::Stream *handle) const {
-  // std::lock_guard<std::mutex> lock(rx_device_mutex);
 
   if (IsValidRxStreamHandle(handle)) {
-    return rx_stream->get_mtu_size();
+    return rx_stream_->get_mtu_size();
   }
 
   if (IsValidTxStreamHandle(handle)) {
@@ -184,10 +193,8 @@ int SoapyPlutoSDR::activateStream(SoapySDR::Stream *handle, const int flags,
   if (flags & ~SOAPY_SDR_END_BURST)
     return SOAPY_SDR_NOT_SUPPORTED;
 
-  std::lock_guard<std::mutex> lock(rx_device_mutex);
-
   if (IsValidRxStreamHandle(handle)) {
-    return this->rx_stream->start(flags, timeNs, numElems);
+    return this->rx_stream_->start(flags, timeNs, numElems);
   }
 
   return 0;
@@ -195,23 +202,14 @@ int SoapyPlutoSDR::activateStream(SoapySDR::Stream *handle, const int flags,
 
 int SoapyPlutoSDR::deactivateStream(SoapySDR::Stream *handle, const int flags,
                                     const long long timeNs) {
-  // scope lock:
-  {
-    std::lock_guard<std::mutex> lock(rx_device_mutex);
 
-    if (IsValidRxStreamHandle(handle)) {
-      return this->rx_stream->stop(flags, timeNs);
-    }
+  if (IsValidRxStreamHandle(handle)) {
+    return this->rx_stream_->stop(flags, timeNs);
   }
 
-  // scope lock :
-  {
-    std::lock_guard<std::mutex> lock(tx_device_mutex);
-
-    if (IsValidTxStreamHandle(handle)) {
-      this->tx_stream->flush();
-      return 0;
-    }
+  if (IsValidTxStreamHandle(handle)) {
+    this->tx_stream_->flush();
+    return 0;
   }
 
   return 0;
@@ -221,10 +219,10 @@ int SoapyPlutoSDR::readStream(SoapySDR::Stream *handle, void *const *buffs,
                               const size_t numElems, int &flags,
                               long long &timeNs, const long timeoutUs) {
 
-  std::lock_guard<std::mutex> lock(rx_device_mutex);
+  // std::lock_guard<std::mutex> lock(rx_device_mutex);
 
   if (IsValidRxStreamHandle(handle)) {
-    int ret = (int)rx_stream->recv(buffs, numElems, flags, timeNs, timeoutUs);
+    int ret = (int)rx_stream_->recv(buffs, numElems, flags, timeNs, timeoutUs);
     return ret;
   } else {
     return SOAPY_SDR_NOT_SUPPORTED;
@@ -236,10 +234,8 @@ int SoapyPlutoSDR::writeStream(SoapySDR::Stream *handle,
                                int &flags, const long long timeNs,
                                const long timeoutUs) {
 
-  std::lock_guard<std::mutex> lock(tx_device_mutex);
-
   if (IsValidTxStreamHandle(handle)) {
-    return this->tx_stream->send(buffs, numElems, flags, timeNs, timeoutUs);
+    return this->tx_stream_->send(buffs, numElems, flags, timeNs, timeoutUs);
     ;
   } else {
     return SOAPY_SDR_NOT_SUPPORTED;

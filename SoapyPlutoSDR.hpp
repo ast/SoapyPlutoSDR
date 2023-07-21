@@ -7,14 +7,12 @@
 #include <atomic>
 #include <chrono>
 #include <iio.h>
-#include <mutex>
-#include <thread>
+#include <memory>
 #include <vector>
 
-#include "stream_format.hpp"
 #include "rx_streamer.hpp"
+#include "stream_format.hpp"
 #include "tx_streamer.hpp"
-
 
 /* SoapySDR::Device subclass */
 class SoapyPlutoSDR : public SoapySDR::Device {
@@ -44,8 +42,8 @@ public:
    * Stream API
    ******************************************************************/
 
-  std::vector<std::string> getStreamFormats(const int direction,
-                                            const size_t channel) const override;
+  std::vector<std::string>
+  getStreamFormats(const int direction, const size_t channel) const override;
 
   std::string getNativeStreamFormat(const int direction, const size_t channel,
                                     double &fullScale) const override;
@@ -63,7 +61,8 @@ public:
   size_t getStreamMTU(SoapySDR::Stream *stream) const override;
 
   int activateStream(SoapySDR::Stream *stream, const int flags = 0,
-                     const long long timeNs = 0, const size_t numElems = 0) override;
+                     const long long timeNs = 0,
+                     const size_t numElems = 0) override;
 
   int deactivateStream(SoapySDR::Stream *stream, const int flags = 0,
                        const long long timeNs = 0) override;
@@ -93,7 +92,7 @@ public:
    * Settings API
    ******************************************************************/
 
-  SoapySDR::ArgInfoList getSettingInfo(void) const;
+  SoapySDR::ArgInfoList getSettingInfo(void) const override;
 
   void writeSetting(const std::string &key, const std::string &value) override;
 
@@ -115,32 +114,33 @@ public:
    * Frontend corrections API
    ******************************************************************/
 
-  bool hasDCOffsetMode(const int direction, const size_t channel) const;
+  bool hasDCOffsetMode(const int direction, const size_t channel) const override;
 
   /*******************************************************************
    * Gain API
    ******************************************************************/
 
   std::vector<std::string> listGains(const int direction,
-                                     const size_t channel) const;
+                                     const size_t channel) const override;
 
-  bool hasGainMode(const int direction, const size_t channel) const;
+  bool hasGainMode(const int direction, const size_t channel) const override;
 
   void setGainMode(const int direction, const size_t channel,
-                   const bool automatic);
+                   const bool automatic) override;
 
-  bool getGainMode(const int direction, const size_t channel) const;
-
-  void setGain(const int direction, const size_t channel, const double value);
+  bool getGainMode(const int direction, const size_t channel) const override;
 
   void setGain(const int direction, const size_t channel,
-               const std::string &name, const double value);
+               const double value) override;
+
+  void setGain(const int direction, const size_t channel,
+               const std::string &name, const double value) override;
 
   double getGain(const int direction, const size_t channel,
-                 const std::string &name) const;
+                 const std::string &name) const override;
 
   SoapySDR::Range getGainRange(const int direction, const size_t channel,
-                               const std::string &name) const;
+                               const std::string &name) const override;
 
   /*******************************************************************
    * Frequency API
@@ -148,64 +148,67 @@ public:
 
   void setFrequency(const int direction, const size_t channel,
                     const std::string &name, const double frequency,
-                    const SoapySDR::Kwargs &args = SoapySDR::Kwargs());
+                    const SoapySDR::Kwargs &args = SoapySDR::Kwargs()) override;
 
   double getFrequency(const int direction, const size_t channel,
-                      const std::string &name) const;
+                      const std::string &name) const override;
 
-  SoapySDR::ArgInfoList getFrequencyArgsInfo(const int direction,
-                                             const size_t channel) const;
+  SoapySDR::ArgInfoList
+  getFrequencyArgsInfo(const int direction,
+                       const size_t channel) const override;
 
   std::vector<std::string> listFrequencies(const int direction,
-                                           const size_t channel) const;
+                                           const size_t channel) const override;
 
   SoapySDR::RangeList getFrequencyRange(const int direction,
                                         const size_t channel,
-                                        const std::string &name) const;
+                                        const std::string &name) const override;
 
   /*******************************************************************
    * Sample Rate API
    ******************************************************************/
 
   void setSampleRate(const int direction, const size_t channel,
-                     const double rate);
+                     const double rate) override;
 
-  double getSampleRate(const int direction, const size_t channel) const;
+  double getSampleRate(const int direction,
+                       const size_t channel) const override;
 
   std::vector<double> listSampleRates(const int direction,
-                                      const size_t channel) const;
+                                      const size_t channel) const override;
 
-  void setBandwidth(const int direction, const size_t channel, const double bw);
+  void setBandwidth(const int direction, const size_t channel,
+                    const double bw) override;
 
-  double getBandwidth(const int direction, const size_t channel) const;
+  double getBandwidth(const int direction, const size_t channel) const override;
 
   std::vector<double> listBandwidths(const int direction,
-                                     const size_t channel) const;
+                                     const size_t channel) const override;
 
   SoapySDR::RangeList getSampleRateRange(const int direction,
-                                         const size_t channel) const;
+                                         const size_t channel) const override;
 
 private:
-  iio_context *ctx;
+
 
   bool IsValidRxStreamHandle(SoapySDR::Stream *handle) const;
   bool IsValidTxStreamHandle(SoapySDR::Stream *handle) const;
 
-  bool is_sensor_channel(struct iio_channel *chn) const;
-  double double_from_buf(const char *buf) const;
-  double get_sensor_value(struct iio_channel *chn) const;
+  //bool is_sensor_channel(struct iio_channel *chn) const;
+  double double_from_buf(const char *const buf) const;
+  double get_sensor_value(const struct iio_channel *chn) const;
   std::string id_to_unit(const std::string &id) const;
 
-  iio_device *dev;
-  iio_device *rx_dev;
-  iio_device *tx_dev;
-  bool gainMode;
+  iio_context *ctx_;
+  iio_device *device_;
+  iio_device *rx_dev_;
+  iio_device *tx_dev_;
 
-  std::mutex rx_device_mutex;
-  std::mutex tx_device_mutex;
+  bool gainMode_;
 
-  bool decimation, interpolation;
+  bool decimation_;
+  bool interpolation_;
 
-  std::unique_ptr<rx_streamer> rx_stream;
-  std::unique_ptr<tx_streamer> tx_stream;
+  std::unique_ptr<rx_streamer> rx_stream_;
+  std::unique_ptr<tx_streamer> tx_stream_;
 };

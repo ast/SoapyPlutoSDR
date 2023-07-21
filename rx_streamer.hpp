@@ -1,5 +1,6 @@
 #pragma once
 
+#include <SoapySDR/ConverterRegistry.hpp>
 #include <SoapySDR/Device.hpp>
 #include <SoapySDR/Types.hpp>
 
@@ -10,12 +11,17 @@
 /* RX Streamer */
 class rx_streamer {
 public:
-  rx_streamer(const iio_device *dev, const plutosdrStreamFormat format,
+  rx_streamer(iio_context *ctx,
+              // const iio_device *dev,
+              const plutosdrStreamFormat format,
               const std::vector<size_t> &channels,
               const SoapySDR::Kwargs &args);
+
   ~rx_streamer();
+
   size_t recv(void *const *buffs, const size_t numElems, int &flags,
               long long &timeNs, const long timeoutUs = 100000);
+
   int start(const int flags, const long long timeNs, const size_t numElems);
 
   int stop(const int flags, const long long timeNs = 100000);
@@ -30,14 +36,22 @@ private:
 
   bool has_direct_copy();
 
-  std::vector<iio_channel *> channel_list;
-  const iio_device *dev;
+  // Converter function:
+  SoapySDR::ConverterRegistry::ConverterFunction converter_;
 
-  size_t buffer_size;
-  size_t byte_offset;
-  size_t items_in_buffer;
-  iio_buffer *buf;
-  const plutosdrStreamFormat format;
-  bool direct_copy;
-  size_t mtu_size;
+  const iio_device *dev_;
+
+  iio_context *ctx_;
+
+  iio_channel *rx0_i;
+  iio_channel *rx0_q;
+
+  size_t buffer_size_;
+
+  size_t byte_offset_;
+  size_t items_in_buffer_;
+  iio_buffer *buf_;
+  const plutosdrStreamFormat format_;
+  bool direct_copy_;
+  size_t mtu_size_;
 };
